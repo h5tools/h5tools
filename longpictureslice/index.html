@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta name="在线长图切片" charset="UTF-8">
+    <title>在线长图切片</title>
+    <script type="text/javascript" src="js/jquery-3.5.1.min.js"></script>
+    <script type="text/javascript" src="js/Blob.js"></script>
+    <script type="text/javascript" src="js/canvas-toBlob.js"></script>
+    <script type="text/javascript" src="js/jszip.min.js"></script>
+    <script type="text/javascript" src="js/FileSaver.min.js"></script>
+</head>
+<body>
+<!-- The `multiple` attribute lets users select multiple files. -->
+<h1>在线长图切片</h1>
+<input type="file" id="file-selector" accept=".jpg, .jpeg, .png">
+<div>
+    横向个数:<input id="horizontal" type="number" value="1" min="1" step="1"/>
+    纵向个数:<input id="vertical" type="number" value="1" min="1" step="1"/>
+</div>
+<div id="download">
+    <button id="btn_download">批量下载</button>
+    <label>进度:</label>
+    <progress id="p_id" max="0" value="0"></progress>
+    <label id="ext_note" style="color: deeppink"></label>
+    <div id="imgContainer"></div>
+</div>
+<script>
+  const fileSelector = $('#file-selector')[0];
+  $('#download').hide();
+  fileSelector.addEventListener('change', (event) => {
+    // let fileReader = new FileReader();
+    // fileReader.onload = function () {
+    //   // 读取结果在fileReader.result里面
+    //   let imgContainer = document.getElementById('imgContainer');
+    //   let image = document.createElement("img");
+    //   image.src = this.result;
+    //   imgContainer.appendChild(image);
+    // }
+    // // base64方式读取
+    // fileReader.readAsDataURL(this.files[0]);
+    $('#imgContainer').empty();
+    let zip = new JSZip();  // jszip对象
+    let image = document.createElement("img");
+    let firstFile = event.target.files[0];
+    let fileName = firstFile.name;
+    image.src = window.URL.createObjectURL(firstFile);
+
+    image.onload = () => {
+      let preViewCanvas = document.createElement("canvas");
+      let preCtx = preViewCanvas.getContext('2d');
+      preViewCanvas.width = image.width;
+      preViewCanvas.height = image.height;
+      preCtx.drawImage(image, 0, 0);
+      $('#imgContainer').append(preViewCanvas);
+
+      //画竖线
+      function redrawAll() {
+        preViewCanvas.height = image.height;
+        preCtx.drawImage(image, 0, 0);
+        let horizontalSliceNum = parseInt($('#horizontal').val());
+        let verticalSliceNum = parseInt($('#vertical').val());
+        let totalWidth = image.width;
+        let totalHeight = image.height;
+        let sliceWidth = totalWidth / horizontalSliceNum;
+        let sliceHeight = totalHeight / verticalSliceNum;
+
+        preCtx.lineWidth = 2;
+        for (let i = 1; i < horizontalSliceNum; i++) {
+          preCtx.beginPath();
+          preCtx.moveTo(sliceWidth * i, 0);
+          preCtx.lineTo(sliceWidth * i, totalHeight)
+          preCtx.closePath();
+          preCtx.stroke();
+        }
+
+        for (let j = 1; j < verticalSliceNum; j++) {
+          preCtx.beginPath();
+          preCtx.moveTo(0, sliceHeight * j);
+          preCtx.lineTo(totalWidth, sliceHeight * j)
+          preCtx.closePath();
+          preCtx.stroke();
+        }
+      }
+
+      $('#horizontal').change(() => {
+        redrawAll();
+      })
+
+      $('#vertical').change(() => {
+        redrawAll();
+      })
+
+      $('#download').show();
+
+      // canvas.toBlob是异步的，所以用Promise来保证操作执行完才进行接下来的操作
+      function addToZip(canvas, zip, name) {
+        return new Promise((resolve, reject) => {
+          canvas.toBlob(function (blob) {
+            zip.file(name, blob);  // 将每次不同的canvas数据添加到zip文件中
+            resolve();
+          });
+        })
+      }
+
+      // 生成zip文件并下载到本地
+      function createZip() {
+        zip.generateAsync({type: 'blob'}).then((content) => {
+          saveAs(content, 'picture_slice.zip');
+          $('#ext_note').text("创建zip文件完毕")
+        });
+      }
+
+      async function createImg() {
+        let canvas = document.createElement("canvas");
+        let ctx = canvas.getContext('2d');
+        let horizontalSliceNum = parseInt($('#horizontal').val());
+        let verticalSliceNum = parseInt($('#vertical').val());
+        let totalWidth = image.width;
+        let totalHeight = image.height;
+        let sliceWidth = totalWidth / horizontalSliceNum;
+        let sliceHeight = totalHeight / verticalSliceNum;
+        canvas.width = sliceWidth;
+        canvas.height = sliceHeight;
+        let totalSliceNum = horizontalSliceNum * verticalSliceNum;
+        $('#p_id').max = totalSliceNum;
+        let progress = 0;
+        for (let i = 0; i < horizontalSliceNum; i++) {
+          for (let j = 0; j < verticalSliceNum; j++) {
+            ctx.drawImage(image, sliceWidth * i, sliceHeight * j, sliceWidth, sliceHeight, 0, 0, sliceWidth, sliceHeight);
+            await addToZip(canvas, zip, fileName + "_" + i + "_" + j + ".png");
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            progress++;
+            $('#ext_note').text(progress + "/" + totalSliceNum);
+            $('#p_id').val(progress);
+          }
+        }
+        $('#ext_note').text("开始创建zip文件....")
+        createZip();
+      }
+
+      $('#btn_download').click(() => {
+        createImg();
+      });
+
+      // Promise.all([
+      //   // Cut out two sprites from the sprite sheet
+      //   createImageBitmap(image, 0, 0, 900, 600),
+      //   // createImageBitmap(image, 0, 663, 1800, 663)
+      // ]).then(function (sprites) {
+      //   // Draw each sprite onto the canvas
+      //   ctx.drawImage(sprites[0], 0, 0);
+      //   // ctx.drawImage(sprites[1], 0, 1000);
+      //
+      //   canvas.toBlob(function (blob) {
+      //     saveAs(blob, fileName);
+      //     // // blob转为同源url
+      //     // let blobUrl = window.URL.createObjectURL(blob)
+      //     // // 创建a链接
+      //     // let a = document.createElement('a')
+      //     // a.href = blobUrl;
+      //     // a.text = "点击下载";
+      //     // a.download = ''     //文件名称，不填默认为当前请求名称
+      //     // document.body.appendChild(a);
+      //     // // 触发a链接点击事件，浏览器开始下载文件
+      //     // // a.click()
+      //   })
+      // });
+    }
+
+    // 必须设置，否则canvas中的内容无法转换为blob
+    image.setAttribute('crossOrigin', 'Anonymous')
+
+  });
+
+</script>
+</body>
+</html>
